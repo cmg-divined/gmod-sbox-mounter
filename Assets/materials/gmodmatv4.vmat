@@ -1,0 +1,48 @@
+// THIS FILE IS AUTO-GENERATED
+
+Layer0
+{
+	shader "shaders/vertexlitgeneric.shader"
+
+	//---- Light Warp Texture ----
+	F_LIGHT_WARP_TEXTURE 1
+
+	//---- Phong Exponent Texture ----
+	F_PHONG_EXPONENT_TEXTURE 1
+
+	//---- Fog ----
+	g_bFogEnabled "1"
+
+	//---- Lighting ----
+	LightWarpTexture "materials/lightwarp_soft.tga"
+
+	//---- Material ----
+	AmbientOcclusion "[1.000000 1.000000 1.000000 0.000000]"
+	BaseTexture "materials/helmet_sfera_01_color.tga"
+	BaseTextureMask "[1.000000 1.000000 1.000000 0.000000]"
+	g_bBlendTintByBaseAlpha "0"
+	g_bUseMetalnessValue "0"
+	g_bUseRoughnessValue "0"
+	g_flMetalnessValue "0.000"
+	g_flNormalIntensity "1.139"
+	g_flRoughnessValue "1.000"
+	g_vColorTint "[0.850 0.850 0.850]"
+	Metalness "[1.000000 1.000000 1.000000 0.000000]"
+	NormalMap "materials/helmet_sfera_01_normal.tga"
+	Roughness "[1.000000 1.000000 1.000000 0.000000]"
+
+	//---- Phong ----
+	g_bPhongAlbedoTint "0"
+	g_bPhongOverrideRoughness "0"
+	g_flGlobalPhongExponent "1.000"
+	g_flPhongBoost "0.000"
+	g_flPhongExponent "150.000"
+	g_vPhongFresnelRanges "[0.100 5.575 15.550]"
+	g_vPhongTint "[1.000 1.000 1.000]"
+	PhongExponentTexture "materials/green.tga"
+
+	//---- Transform ----
+	g_flTextureRotation "0.000"
+	g_vTextureOffset "[0.000 0.000]"
+	g_vTextureScale "[1.000 1.000]"
+}

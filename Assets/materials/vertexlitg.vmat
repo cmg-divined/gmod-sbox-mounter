@@ -1,0 +1,29 @@
+// THIS FILE IS AUTO-GENERATED
+
+Layer0
+{
+	shader "shaders/vertexlitgeneric.shader"
+
+	//---- Fog ----
+	g_bFogEnabled "1"
+
+	//---- Material ----
+	AmbientOcclusion "materials/default/default_ao.tga"
+	BaseTexture "materials/default/default_color.tga"
+	BaseTextureMask "materials/default/default_mask.tga"
+	g_bBlendTintByBaseAlpha "0"
+	g_bUseMetalnessValue "0"
+	g_bUseRoughnessValue "0"
+	g_flMetalnessValue "0.000"
+	g_flNormalIntensity "1.000"
+	g_flRoughnessValue "1.000"
+	g_vColorTint "[1.000 1.000 1.000]"
+	Metalness "materials/default/default_metal.tga"
+	NormalMap "materials/default/default_normal.tga"
+	Roughness "materials/default/default_rough.tga"
+
+	//---- Transform ----
+	g_flTextureRotation "0.000"
+	g_vTextureOffset "[0.000 0.000]"
+	g_vTextureScale "[1.000 1.000]"
+}

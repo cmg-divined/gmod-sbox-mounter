@@ -1,0 +1,319 @@
+//=========================================================================================================================
+// Optional
+//=========================================================================================================================
+HEADER
+{
+	// CompileTargets = ( IS_SM_50 && ( PC || VULKAN ) );
+	Description = "SourceBox skin shader. See license.txt for license information";
+}
+
+//=========================================================================================================================
+// Optional
+//=========================================================================================================================
+FEATURES
+{
+    #include "legacy_features.hlsl"
+
+    Feature( F_CUBEMAP,                         0..1, "Rendering" );
+    Feature( F_CUSTOM_CUBEMAP,                  0..1, "Rendering" );
+    FeatureRule( Requires1( F_CUSTOM_CUBEMAP, F_CUBEMAP ), "" );
+
+    Feature( F_SELFILLUM,                       0..1, "Rendering" );
+    Feature( F_SELFILLUMFRESNEL,                0..1, "Rendering" );
+    Feature( F_LIGHTWARPTEXTURE,                0..1, "Rendering" );
+    Feature( F_PHONGWARPTEXTURE,                0..1, "Rendering" );
+    Feature( F_WRINKLEMAP,                      0..1, "Rendering" );
+    Feature( F_RIMLIGHT,                        0..1, "Rendering" );
+    Feature( F_BLENDTINTBYBASEALPHA,            0..1, "Rendering" );
+
+    Feature( F_DETAILTEXTURE,                   0..1, "Rendering" );
+    // The SDK only supports blendmodes 0-6 on skin
+    Feature( F_DETAIL_BLEND_MODE, 0..6(0="RGB_EQUALS_BASE_x_DETAILx2",1="RGB_ADDITIVE",2="DETAIL_OVER_BASE",3="FADE",4="BASE_OVER_DETAIL",5="RGB_ADDITIVE_SELFILLUM",6="RGB_ADDITIVE_SELFILLUM_THRESHOLD_FADE"), "Rendering" );
+    FeatureRule( Requires1( F_DETAIL_BLEND_MODE, F_DETAILTEXTURE ), "Requires detail texture" );
+
+    FeatureRule(Requires1(F_SELFILLUMFRESNEL, F_SELFILLUM), "");
+    // not necessary, but was a constraint of the original shader
+    FeatureRule(Allow1(F_LIGHTWARPTEXTURE, F_SELFILLUMFRESNEL), "");
+
+    FeatureRule(Allow1(F_BLENDTINTBYBASEALPHA, F_SELFILLUM), "");
+
+    // this is enforced in SDK code
+	FeatureRule( Allow1( F_ALPHA_TEST, F_SELFILLUM ), "" );
+	// FeatureRule( Allow1( F_ALPHA_TEST, F_BASEALPHAENVMAPMASK ), "" );
+}
+
+//=========================================================================================================================
+// Optional
+//=========================================================================================================================
+MODES
+{
+    Forward();
+    Depth ( S_MODE_DEPTH);
+}
+
+//=========================================================================================================================
+COMMON
+{
+    #include "system.fxc" // This should always be the first include in COMMON
+    #include "sbox_shared.fxc"
+    #define VS_INPUT_HAS_TANGENT_BASIS 1
+    #define PS_INPUT_HAS_TANGENT_BASIS 1
+
+
+    // vDetailTextureCoords in pixelinput.hlsl
+    StaticCombo( S_DETAILTEXTURE                    , F_DETAILTEXTURE                   , Sys( ALL ) );
+    #define S_DETAIL_TEXTURE S_DETAILTEXTURE
+
+    // disabled to reduce compile time
+    //StaticCombo( S_WRINKLEMAP                          , F_WRINKLEMAP                         , Sys( ALL ) );
+    // #define S_WRINKLE_MAP S_WRINKLEMAP
+    // #define S_WRINKLE S_WRINKLEMAP
+}
+
+//=========================================================================================================================
+
+struct VertexInput
+{
+	#include "common/vertexinput.hlsl"
+};
+
+//=========================================================================================================================
+
+struct PixelInput
+{
+	#include "common/pixelinput.hlsl"
+};
+
+//=========================================================================================================================
+
+VS
+{
+    #include "common/vertex.hlsl"
+
+	//
+	// Main
+	//
+	PixelInput MainVs( VertexInput i )
+	{
+		PixelInput o = ProcessVertex( i );
+
+        #if S_DETAILTEXTURE
+            o.vTextureCoords.zw = i.vTexCoord.xy;
+        #endif // S_DETAILTEXTURE
+
+        #if S_WRINKLEMAP
+            o.vNormalWs.w = i.vNormalOs.w;
+        #endif // S_WRINKLEMAP
+
+		return FinalizeVertex( o );
+	}
+}
+
+//=========================================================================================================================
+
+PS
+{
+    StaticCombo( S_CUBEMAP                          , F_CUBEMAP                         , Sys( ALL ) );
+    StaticCombo( S_CUSTOM_CUBEMAP                   , F_CUSTOM_CUBEMAP                  , Sys( ALL ) );
+    StaticCombo( S_SELFILLUM                        , F_SELFILLUM                       , Sys( ALL ) );
+    StaticCombo( S_SELFILLUMFRESNEL                 , F_SELFILLUMFRESNEL                , Sys( ALL ) );
+    DynamicCombo( D_LIGHTWARPTEXTURE, 0..1, Sys( ALL ) );
+    DynamicCombo( D_PHONGWARPTEXTURE, 0..1, Sys( ALL ) );
+
+    DynamicCombo( D_RIMLIGHT, 0..1, Sys( ALL ) );
+    DynamicCombo( D_BLENDTINTBYBASEALPHA, 0..1, Sys( ALL ) );
+
+    // Preserve legacy S_ checks inside shared includes by aliasing to D_
+    #define S_LIGHTWARPTEXTURE D_LIGHTWARPTEXTURE
+    #define S_PHONGWARPTEXTURE D_PHONGWARPTEXTURE
+    #define S_RIMLIGHT D_RIMLIGHT
+    #define S_BLENDTINTBYBASEALPHA D_BLENDTINTBYBASEALPHA
+    
+    // StaticCombo( S_DETAIL_BLEND_MODE                , F_DETAIL_BLEND_MODE               , Sys( ALL ) );
+    int g_nDetailBlendMode < Expression(F_DETAIL_BLEND_MODE); >;
+    #define DETAIL_BLEND_MODE g_nDetailBlendMode
+
+    #define USE_MANUAL_CUBEMAP (S_CUBEMAP && S_CUSTOM_CUBEMAP)
+    #if D_BLENDTINTBYBASEALPHA
+        #define BASE_COLOR_ALPHA_NAME   TintMask
+    #elif ( S_SELFILLUMFRESNEL == 1 )
+        #define BASE_COLOR_ALPHA_NAME   SelfIllumMaskTexture
+    #elif ( !S_SELFILLUM && !D_BLENDTINTBYBASEALPHA )
+        #define BASE_COLOR_ALPHA_NAME   Translucency
+    // #else
+        // #define BASE_COLOR_ALPHA_NAME   EnvmapMask
+    #endif
+
+    #define NORMAL_ALPHA_NAME       SpecMask
+
+    float3 GetEnvmapColor( float3 envmapBase, float3 envmapMask, float fresnelRanges )
+    {
+        #if S_CUBEMAP
+		    return (g_flEnvMapScale *
+							lerp(1, fresnelRanges, g_flEnvMapFresnel) *
+							lerp(envmapMask.r, 1-envmapMask.r, g_fInvertPhongMask)) *
+                            envmapBase *
+							g_vEnvMapTint.xyz;
+        #else // !S_CUBEMAP
+            return float3(0.0, 0.0, 0.0);
+        #endif // !S_CUBEMAP
+    }
+    
+    #include "legacy_pixel.hlsl"
+
+	float4 MainPs( PixelInput i ) : SV_Target0
+	{
+        ShadingLegacyConfig config = ShadingLegacyConfig::GetDefault();
+        config.DoDiffuse = true;
+        config.HalfLambert = true;
+        config.DoAmbientOcclusion = /*S_AMBIENT_OCCLUSION ? */true /*: false*/;
+        config.DoLightingWarp = D_LIGHTWARPTEXTURE ? true : false;
+        config.DoRimLighting = D_RIMLIGHT ? true : false;
+        config.DoSpecularWarp = D_PHONGWARPTEXTURE ? true : false;
+        config.DoSpecular = true;
+
+        config.SelfIllum = S_SELFILLUM ? true : false;
+        config.SelfIllumFresnel = S_SELFILLUMFRESNEL ? true : false;
+
+        config.StaticLight = false;
+        config.AmbientLight = true;
+
+        #if S_WRINKLEMAP
+            float fWrinkleWeight = i.vNormalWs.w;
+            float flWrinkleAmount = saturate( -fWrinkleWeight );					// One of these two is zero
+            float flStretchAmount = saturate(  fWrinkleWeight );					// while the other is in the 0..1 range
+
+            float flTextureAmount = 1.0f - flWrinkleAmount - flStretchAmount;		// These should sum to one
+        #endif // S_WRINKLEMAP
+
+        float2 vUV = i.vTextureCoords.xy;
+        float4 baseColor = CONVERT_COLOR(Tex2DS( g_tColor, TextureFiltering, vUV ));
+        #if S_WRINKLEMAP
+            float4 wrinkleColor = Tex2DS( g_tWrinkle, TextureFiltering, vUV );
+            float4 stretchColor = Tex2DS( g_tStretch, TextureFiltering, vUV );
+
+            // Apply wrinkle blend to only RGB.  Alpha comes from the base texture
+            baseColor.rgb = flTextureAmount * baseColor.rgb + flWrinkleAmount * wrinkleColor.rgb + flStretchAmount * stretchColor.rgb;
+        #endif // S_WRINKLEMAP
+
+        // #if S_AMBIENT_OCCLUSION
+        float flAmbientOcclusion = Tex2DS( g_tAmbientOcclusionTexture, TextureFiltering, vUV ).r;
+        // #endif // S_AMBIENT_OCCLUSION
+
+        #if S_DETAILTEXTURE
+            // float4 detailColor = Tex2D( g_tDetailTexture, i.vTextureCoords.zw );
+            // packed in SDK
+            float4 detailColor = CONVERT_DETAIL(Tex2DS( g_tDetailTexture, TextureFiltering, i.vTextureCoords.zw ));
+            baseColor = TextureCombine( baseColor, detailColor, DETAIL_BLEND_MODE, g_flDetailBlendFactor );
+        #endif // S_DETAILTEXTURE
+
+        // float fogFactor = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos_SpecExponent.z, vWorldPos.z, vProjPos.z );
+        float3 positionWs = i.vPositionWithOffsetWs.xyz + g_vCameraPositionWs;
+        // View ray in World Space
+        float3 vEyeDir = normalize(CalculatePositionToCameraDirWs( positionWs ));
+
+        float3 worldSpaceNormal, tangentSpaceNormal;
+        float fSpecMask = 1.0f;
+        float4 normalTexel = Tex2DS( g_tNormal, TextureFiltering, vUV );
+        // inverted normals
+		normalTexel.y = 1 - normalTexel.y;
+
+        #if S_WRINKLEMAP
+            float4 wrinkleNormal = Tex2DS( g_tWrinkleNormal, TextureFiltering,	vUV );
+            float4 stretchNormal = Tex2DS( g_tWrinkleStretchNormal, TextureFiltering, vUV );
+            // inverted normals
+		    wrinkleNormal.y = 1 - wrinkleNormal.y;
+		    stretchNormal.y = 1 - stretchNormal.y;
+            normalTexel = flTextureAmount * normalTexel + flWrinkleAmount * wrinkleNormal + flStretchAmount * stretchNormal;
+        #endif // S_WRINKLEMAP
+
+        // #if (FASTPATH_NOBUMP == 0 )
+        tangentSpaceNormal = g_bBaseMapAlphaPhongMask ? float3(0, 0, 1) : 2.0f * normalTexel.xyz - 1.0f;
+        fSpecMask = g_bBaseMapAlphaPhongMask ? baseColor.a : normalTexel.a;
+        // #else
+        //     tangentSpaceNormal = float3(0, 0, 1);
+        //     fSpecMask = baseColor.a;
+        // #endif
+
+	    // worldSpaceNormal = normalize( mul( i.tangentSpaceTranspose, tangentSpaceNormal ) );
+	    worldSpaceNormal = TransformNormal( i, tangentSpaceNormal );
+
+        float fFresnelRanges = Fresnel( worldSpaceNormal, vEyeDir, g_vFresnelRanges );
+	    float fRimFresnel = Fresnel4( worldSpaceNormal, vEyeDir );
+        
+        // envmap params
+        // Mask is either normal map alpha or base map alpha
+        #if ( S_SELFILLUMFRESNEL == 1 ) // This is to match the 2.0 version of vertexlitgeneric
+            float fEnvMapMask = g_bEnvMapShadowTweaks ? g_fInvertPhongMask : baseColor.a;
+        #else
+            float fEnvMapMask = g_bEnvMapShadowTweaks ? fSpecMask : baseColor.a;
+        #endif
+
+        float3 vSpecularTint = float3(1.0, 1.0, 1.0);
+        float fRimMask = 0;
+        float fSpecExp = 1;
+
+        float4 vSpecExpMap = Tex2DS( g_tSpecularExponentTexture, TextureFiltering, vUV );
+	
+        // if ( !bFlashlight )
+        // {
+            fRimMask = lerp( 1.0f, vSpecExpMap.a, g_flRimMask );						// Select rim mask
+        // }
+
+	    fSpecExp = g_bConstantSpecularExponent ? g_flSpecularExponent : (1.0f + 149.0f * vSpecExpMap.r);
+
+        vSpecularTint = lerp( float3(1.0f, 1.0f, 1.0f), baseColor.rgb, vSpecExpMap.g );
+        vSpecularTint = g_bConstantSpecularTint ? g_vSpecularTint.rgb : vSpecularTint;
+            
+        float3 albedo = baseColor.rgb;
+
+        // If we didn't already apply Fresnel to specular warp, modulate the specular
+        #if ( !D_PHONGWARPTEXTURE )
+            fSpecMask *= fFresnelRanges;
+        #endif // ( !S_PHONGWARPTEXTURE )
+
+        #if D_BLENDTINTBYBASEALPHA
+            float3 tintedColor = albedo * g_vDiffuseModulation.rgb;
+            tintedColor = lerp(tintedColor, g_vDiffuseModulation.rgb, g_flTintReplacementControl);
+            albedo = lerp(albedo, tintedColor, baseColor.a);
+        #else // !D_BLENDTINTBYBASEALPHA
+            albedo = albedo * g_vDiffuseModulation.rgb;
+        #endif // D_BLENDTINTBYBASEALPHA
+
+        Material m = GetDefaultLegacyMaterial();
+        m.Albedo = albedo;
+        // m.Normal = TransformNormal( i, DecodeHemiOctahedronNormal( normalTexel.xy ) );
+        m.Normal = worldSpaceNormal;
+        
+        m.SpecularMask = fSpecMask;
+        m.SpecularExponent = fSpecExp;
+        m.SpecularTint = vSpecularTint;
+        m.Fresnel = fFresnelRanges;
+        m.EnvmapMask = float3(fEnvMapMask, fEnvMapMask, fEnvMapMask);
+        m.RimMask = fRimMask;
+        m.RimFresnel = fRimFresnel;
+        m.RimExponent = g_flRimExponent;
+        
+        // #if S_AMBIENT_OCCLUSION
+        m.AmbientOcclusion = flAmbientOcclusion;
+        // #endif // S_AMBIENT_OCCLUSION
+
+        #if ( S_SELFILLUMFRESNEL == 1 )
+            // this one just uses the base color alpha
+            m.SelfIllumMask = baseColor.a;
+        #else
+            // whereas this samples a mask
+            float3 vSelfIllumMask = Tex2DS( g_tSelfIllumMaskTexture, TextureFiltering, vUV ).rgb;
+            vSelfIllumMask = g_bSelfIllumMaskControl ? vSelfIllumMask : baseColor.aaa;
+            m.SelfIllumMask = vSelfIllumMask;
+        #endif
+
+        float alpha = g_vDiffuseModulation.a;
+        #if ( !S_SELFILLUM && !D_BLENDTINTBYBASEALPHA )
+            alpha = g_bBaseMapAlphaPhongMask ? alpha : baseColor.a * alpha;
+        #endif // ( !S_SELFILLUM && !S_BLENDTINTBYBASEALPHA )
+        m.Opacity = alpha;
+        
+        return FinalizeLegacyOutput(ShadingModelLegacy::Shade( i, m, config ));
+	}
+}
